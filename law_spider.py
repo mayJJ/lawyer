@@ -7,9 +7,11 @@ from lawyer.DataPersistence import DataPersistence
 from multiprocessing.dummy import Pool as ThreadPool
 import random
 import time
-# gevent
+import logging
+import datetime
 
-
+logging.basicConfig(format='%(asctime)s %(message)s', datefmt='%Y/%m/%d/ %I:%M:%S %p', filename='lawyer_spider.log',
+                    filemode='w', level=logging.DEBUG)
 # join a city url collection
 city_urls = set()
 # put url of each city for law list
@@ -34,18 +36,27 @@ headers = {
 # 从城市页进入, 获得城市标签href
 def get_first_request(url):
     # firsr request city page
-    r = requests.get(url=url, headers=headers).text
+    r = requests.get(url=url, headers=headers)
+    if r.status_code != 200:
+        logging.error('首次请求失败')
+        return
+
+    logging.info("首次请求成功")
     # parse the page
-    tree = html.fromstring(r)
+    tree = html.fromstring(r.text)
     city_href = tree.xpath("//tr/td[@align='left']/span/a/@href")
-    print(city_href)
+    # print(city_href)
     for each in city_href:
         # city add in collection
         city_urls.add(each)
     print('>>>>>>>>>>>>>>>>' + str(city_urls.__len__()))
-
+    count = 0
     # 线程1爬取地区的律师列表
     while city_urls.__len__():
+        count += 1
+        c = str(count)
+        # print(type(str(count)))
+        logging.info('线程%s启动' %c)
         th1 = Thread(target=get_city_lawyer, args=())
         th1.start()
         ra = random.uniform(5, 13)
@@ -62,6 +73,9 @@ def get_first_request(url):
 def get_city_lawyer():
     city_href = city_urls.pop()
     city_url = 'http://www.66law.cn' + city_href + 'lawyer/' + 'page_{}.aspx'.format(1)
+    # 记录爬取的城市列表
+    dp = DataPersistence()
+    dp.save_city_url(city_url)
     # parse_lawyer_list(city_url)
 
     # print('律师页>>>>>>>>>' + str(lawyer_href))
@@ -74,20 +88,30 @@ def parse_lawyer_list(city_url):
     ra = random.uniform(2, 5)
     time.sleep(ra)
     tree = html.fromstring(r)
+    # 判断请求的页面是否有律师信息的xpath块
+    lawyer_block = tree.xpath("//ul[@class='find-list find-list5']")
+    if len(lawyer_block) == 0:
+        logging.debug('请求的页面%s没有任何律师信息'% city_url)
+        return
     # 拿律师列表中的href，用于爬取详情页面
     lawyer_href = tree.xpath("//ul[@class='find-list find-list5']/li/div/a[@class='ad-hr']/@href")
     lawyer_name = tree.xpath("//ul[@class='find-list find-list5']/li[@class='clearfix tj-lawyer']/p[1]/a/text()")
     lawyer_phone = tree.xpath("//ul[@class='find-list find-list5']/li[@class='clearfix tj-lawyer']/p[1]/b/text()")
-    print(lawyer_href, lawyer_name, lawyer_phone)
+    # print(lawyer_href, lawyer_name, lawyer_phone)
 
     for n, p, h in zip(lawyer_name, lawyer_phone, lawyer_href):
         dic = {
             'lawyer_name': n,
-            'lawyer_href': p,
-            'lawyer_phone': h,
+            'lawyer_href': h,
+            'lawyer_phone': p,
+            'crawl_time': datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')
         }
         dp = DataPersistence()
-        dp.save(dic)
+        pool = ThreadPool(processes=10)
+
+        pool.apply_async(dp.search(dic))
+        pool.close()
+        pool.join()
     clean_detail_url(lawyer_href)
 
 
@@ -99,7 +123,7 @@ def clean_detail_url(lawyer_href):
                 print(each)
                 detail_urls.add(each)
             else:
-
+                logging.debug('解析的律师详情信息url不合理, 或者为空')
                 detail_urls.add('')
 
     # 将详情页的url添加进详情页集合
@@ -111,13 +135,15 @@ def clean_detail_url(lawyer_href):
 def get_second_page(city_href):
     url = 'http://www.66law.cn' + city_href + 'lawyer/' + 'page_{}.aspx'.format(2)
     r = requests.get(url=url, headers=headers)
+    if r.status_code == 301:
+        logging.info("该区域律师列表仅一页")
     tree = html.fromstring(r.text)
     # 拿到总页数
     total_page = tree.xpath("//div[@id='lawyeronlinepage']/a[last()-1]/text()")
 
     # 第二页拿不到想要的数据， 说明只有一页
     if len(total_page) == 0:
-        pass
+        logging.debug("%s 抓取的页数为,没有拿到总页数" % url)
     else:
         # 能拿到总页数, 取出页数,构造url
         page = total_page[0]
@@ -134,7 +160,11 @@ def more_lawyer_list(page, city_href):
 
 
 def get_lawyer_info():
-    r = requests.get(url=detail_urls.pop(), args=()).text
+    url = detail_urls.pop()
+    r = requests.get(url=url, args=()).text
+    if r.status_code != 200:
+        logging.debug('律师详情页{}请求失败').format(url)
+        return
     tree = html.fromstring(r)
     parse_lawyer_info(tree)
 
@@ -171,11 +201,22 @@ def parse_lawyer_info(tree):
     dp = DataPersistence()
     pool = ThreadPool(processes=10)
 
-    pool.apply_async(dp.save(dic))
+    pool.apply_async(dp.save_mongo_lawyers(dic))
     pool.close()
     pool.join()
 
 
 if __name__ == '__main__':
+    t1 = datetime.datetime.now()
+    logging.info(t1.strftime('%H hours:%M min:%S s') + '程序启动')
+
     url = 'http://www.66law.cn/city/'
     get_first_request(url=url)
+
+    dp = DataPersistence()
+    dp.write_file()
+
+    t2 = datetime.datetime.now()
+    t = t2 - t1
+    logging.info('程序在' + t2.strftime('%H hours:%M min:%S s') + '执行完毕', '总计耗时' +
+                 str(t))
