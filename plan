@@ -1,0 +1,53 @@
+# encoding=utf-8
+'''
+1. http://www.66law.cn/city/  城市页， 拿到城市href构造url  http://www.66law.cn/hefei/lawyer/
+2. 列表页 http://www.66law.cn/hefei/lawyer/page_1.aspx，拿到律师信息详情页url
+3.  律师详情页：  http://gengzhaojun.66law.cn/
+    crawl字段：
+        姓名： name
+        电话： telephone
+        邮箱: email
+        地址:  address
+        专长:  speciality
+        执页政号: authentication
+        执业机构: company
+        从业年限: work_year
+'''
+
+'''
+    所用技术（二选一）:
+        1. requests(请求) + xpath/re(解析) + redis(缓存) + mongodb(存储)
+        2. scrapy
+        异步写入  +   多线程请求
+
+all_city_url = 'http://www.66law.cn/city/'
+each_city_url = 'http://www.66law.cn/hefei/lawyer/'
+detail_url = 'http://gengzhaojun.66law.cn/'
+'''
+
+难点一：
+    第二页才能拿到总页数
+    1. 总共只有一页， xpath定位元素为空。
+    2. 多页， xpath取到总页数， 用于翻页
+
+    拿第一页， 详情放入详情集合。
+    判断是否还有更多页，
+        如果没有，退出。
+        如果有， 那构造其他列表页，并且添加进列表集合。
+
+数据检查：  log打印日志，问题原因出处可能在于两点：
+1.  请求后没拿到数据。
+        a. 状态码是否正确， 200还是其他的？
+        b. 有可能状态码正确，列表页仍然拿不到数据。先拿列表块状元素，如果为空，请求的页面有问题。
+2.  拿到数据后未解析成功.
+        a. 如果页面没有数据或者解析规则错误， 会返回一个空列表
+
+
+2017.07.10  本周计划
+1. 维护一个长期有效的代理池
+2. 维护要给数据持久化的接口flask-api
+    mysql / mongodb / redis
+
+2017.07.10
+1. 给lawyer_info加上版本控制
+2. 加上日志记录
